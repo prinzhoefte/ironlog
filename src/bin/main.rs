@@ -1,25 +1,23 @@
 #[macro_use]
 extern crate rocket;
 
+use ironlog::client_handler;
 use ironlog::config::Config;
 use ironlog::types::LogMessage;
-use ironlog::client_handler;
 
-use rocket::http::ContentType;
-use rocket::form::FromForm;
-use rocket::serde::json::Json;
-use include_dir::{include_dir, Dir};
-use std::path::{Path, PathBuf};
-use serde::{Deserialize, Serialize};
-use sqlx::{SqlitePool, sqlite::SqlitePoolOptions, Row};
-use std::fs;
-use chrono::{Utc, Duration};
+use chrono::{Duration, Utc};
 use clap::Parser;
+use include_dir::{include_dir, Dir};
+use rocket::form::FromForm;
+use rocket::http::ContentType;
+use rocket::serde::json::Json;
+use serde::{Deserialize, Serialize};
+use sqlx::{sqlite::SqlitePoolOptions, Row, SqlitePool};
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-
 static STATIC_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/static");
-
 
 fn default_timestamp() -> String {
     Utc::now().to_rfc3339()
@@ -65,7 +63,8 @@ async fn main() {
         .expect("Failed to create pool.");
 
     // Ensure the logs table exists
-    sqlx::query("
+    sqlx::query(
+        "
         CREATE TABLE IF NOT EXISTS logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             level TEXT,
@@ -77,7 +76,8 @@ async fn main() {
             hash TEXT,
             timestamp TEXT
         )
-    ")
+    ",
+    )
     .execute(&db_pool)
     .await
     .expect("Failed to create logs table.");
@@ -92,7 +92,10 @@ async fn main() {
     });
 
     // Launch the Rocket server
-    let api_server_ip = config.api_server_ip.parse::<std::net::IpAddr>().expect("Invalid IP address for API server");
+    let api_server_ip = config
+        .api_server_ip
+        .parse::<std::net::IpAddr>()
+        .expect("Invalid IP address for API server");
     let figment = rocket::Config::figment()
         .merge(("address", api_server_ip))
         .merge(("port", config.api_server_port));
@@ -109,6 +112,8 @@ async fn main() {
                 get_log_info,
                 purge_logs,
                 insert_log,
+                delete_logs_by_hash,
+                delete_logs_by_time_range,
             ],
         )
         .mount("/", routes![index, serve_file])
@@ -146,7 +151,8 @@ async fn get_hashes(db_pool: &rocket::State<SqlitePool>) -> Json<Vec<String>> {
         .await
         .expect("Failed to fetch hashes.");
 
-    let hashes = rows.into_iter()
+    let hashes = rows
+        .into_iter()
         .map(|row| row.get::<String, _>("hash"))
         .collect();
 
@@ -178,10 +184,7 @@ async fn get_date_range(db_pool: &rocket::State<SqlitePool>) -> Json<DateRange> 
         });
     }
 
-    Json(DateRange {
-        min_date,
-        max_date,
-    })
+    Json(DateRange { min_date, max_date })
 }
 
 #[derive(FromForm)]
@@ -199,7 +202,8 @@ async fn get_logs(
 ) -> Option<Json<Vec<LogMessage>>> {
     use sqlx::QueryBuilder;
 
-    let mut builder = QueryBuilder::<sqlx::Sqlite>::new("
+    let mut builder = QueryBuilder::<sqlx::Sqlite>::new(
+        "
         SELECT
             level,
             message,
@@ -210,7 +214,8 @@ async fn get_logs(
             hash,
             timestamp
         FROM logs
-        WHERE hash = ");
+        WHERE hash = ",
+    );
     builder.push_bind(hash);
 
     let mut count = None;
@@ -236,18 +241,15 @@ async fn get_logs(
 
     let query = builder.build_query_as::<LogMessage>();
 
-    let logs = query
-        .fetch_all(db_pool.inner())
-        .await
-        .ok()?;
+    let logs = query.fetch_all(db_pool.inner()).await.ok()?;
 
     Some(Json(logs))
 }
 
-
 #[get("/list_files")]
 fn list_files() -> String {
-    let files: Vec<_> = STATIC_DIR.files()
+    let files: Vec<_> = STATIC_DIR
+        .files()
         .map(|f| f.path().display().to_string())
         .collect();
     format!("Files in static dir: {:?}", files)
@@ -266,7 +268,7 @@ fn serve_file(file: PathBuf) -> Option<(ContentType, Vec<u8>)> {
 // New Struct for LogInfo
 #[derive(Serialize)]
 struct LogInfo {
-    db_size: u64,           // in bytes
+    db_size: u64, // in bytes
     total_log_count: i64,
     number_of_hashes: i64,
     min_date: String,
@@ -325,7 +327,8 @@ async fn get_log_info(
         .await
         .ok()?;
 
-    let hash_list = rows.into_iter()
+    let hash_list = rows
+        .into_iter()
         .map(|row| row.get::<String, _>("hash"))
         .collect();
 
@@ -352,6 +355,73 @@ async fn purge_logs(db_pool: &rocket::State<SqlitePool>) -> Json<String> {
     }
 }
 
+// New endpoint to delete logs by hash
+#[derive(Serialize)]
+struct DeleteResponse {
+    success: bool,
+    message: String,
+    deleted_count: Option<i64>,
+}
+
+#[delete("/delete_logs/<hash>")]
+async fn delete_logs_by_hash(
+    hash: &str,
+    db_pool: &rocket::State<SqlitePool>,
+) -> Json<DeleteResponse> {
+    let result = sqlx::query("DELETE FROM logs WHERE hash = ?")
+        .bind(hash)
+        .execute(db_pool.inner())
+        .await;
+
+    match result {
+        Ok(query_result) => Json(DeleteResponse {
+            success: true,
+            message: format!("Successfully deleted logs for hash: {}", hash),
+            deleted_count: Some(query_result.rows_affected() as i64),
+        }),
+        Err(e) => Json(DeleteResponse {
+            success: false,
+            message: format!("Failed to delete logs for hash {}: {}", hash, e),
+            deleted_count: None,
+        }),
+    }
+}
+
+// New endpoint to delete logs by time range
+#[derive(Deserialize)]
+struct TimeRangeDelete {
+    start_time: String,
+    end_time: String,
+}
+
+#[delete("/delete_time_range", data = "<time_range>")]
+async fn delete_logs_by_time_range(
+    time_range: Json<TimeRangeDelete>,
+    db_pool: &rocket::State<SqlitePool>,
+) -> Json<DeleteResponse> {
+    let result = sqlx::query("DELETE FROM logs WHERE timestamp >= ? AND timestamp <= ?")
+        .bind(&time_range.start_time)
+        .bind(&time_range.end_time)
+        .execute(db_pool.inner())
+        .await;
+
+    match result {
+        Ok(query_result) => Json(DeleteResponse {
+            success: true,
+            message: format!(
+                "Successfully deleted logs between {} and {}",
+                time_range.start_time, time_range.end_time
+            ),
+            deleted_count: Some(query_result.rows_affected() as i64),
+        }),
+        Err(e) => Json(DeleteResponse {
+            success: false,
+            message: format!("Failed to delete logs in time range: {}", e),
+            deleted_count: None,
+        }),
+    }
+}
+
 // Endpoint to insert a log
 #[post("/insert_log", data = "<log_message>")]
 async fn insert_log(
@@ -368,11 +438,13 @@ async fn insert_log(
     log_message.message = truncate_string(&log_message.message, config.max_log_length);
 
     // Check if the hash exists
-    let hash_exists: bool = sqlx::query_scalar::<_, i64>("SELECT EXISTS(SELECT 1 FROM logs WHERE hash = ?)")
-        .bind(&log_message.hash)
-        .fetch_one(db_pool)
-        .await
-        .unwrap_or(0) != 0;
+    let hash_exists: bool =
+        sqlx::query_scalar::<_, i64>("SELECT EXISTS(SELECT 1 FROM logs WHERE hash = ?)")
+            .bind(&log_message.hash)
+            .fetch_one(db_pool)
+            .await
+            .unwrap_or(0)
+            != 0;
 
     if !hash_exists {
         // Get the total number of distinct hashes
@@ -388,10 +460,12 @@ async fn insert_log(
     }
 
     // Insert the log_message into the database
-    let result = sqlx::query("
+    let result = sqlx::query(
+        "
         INSERT INTO logs (level, message, target, module_path, file, line, hash, timestamp)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ")
+    ",
+    )
     .bind(&log_message.level)
     .bind(&log_message.message)
     .bind(&log_message.target)
@@ -417,15 +491,17 @@ async fn insert_log(
 
     if log_count > (config.max_log_count + 50) as i64 {
         // Delete the oldest 50 logs for this hash
-        let result = sqlx::query("
-            DELETE FROM logs 
+        let result = sqlx::query(
+            "
+            DELETE FROM logs
             WHERE id IN (
-                SELECT id FROM logs 
-                WHERE hash = ? 
-                ORDER BY timestamp ASC 
+                SELECT id FROM logs
+                WHERE hash = ?
+                ORDER BY timestamp ASC
                 LIMIT 50
             )
-        ")
+        ",
+        )
         .bind(&log_message.hash)
         .execute(db_pool)
         .await;
