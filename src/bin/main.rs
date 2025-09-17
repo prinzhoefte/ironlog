@@ -108,7 +108,6 @@ async fn main() {
             routes![
                 get_hashes,
                 get_logs,
-                get_date_range,
                 get_log_info,
                 purge_logs,
                 insert_log,
@@ -157,34 +156,6 @@ async fn get_hashes(db_pool: &rocket::State<SqlitePool>) -> Json<Vec<String>> {
         .collect();
 
     Json(hashes)
-}
-
-#[derive(Serialize)]
-struct DateRange {
-    min_date: String,
-    max_date: String,
-}
-
-#[get("/date_range")]
-async fn get_date_range(db_pool: &rocket::State<SqlitePool>) -> Json<DateRange> {
-    let min_date: String = sqlx::query_scalar("SELECT MIN(timestamp) FROM logs")
-        .fetch_one(db_pool.inner())
-        .await
-        .unwrap_or_else(|_| Utc::now().to_rfc3339());
-
-    let max_date: String = sqlx::query_scalar("SELECT MAX(timestamp) FROM logs")
-        .fetch_one(db_pool.inner())
-        .await
-        .unwrap_or_else(|_| Utc::now().to_rfc3339());
-
-    if max_date.is_empty() {
-        return Json(DateRange {
-            min_date: (Utc::now() - Duration::days(7)).to_rfc3339(),
-            max_date: Utc::now().to_rfc3339(),
-        });
-    }
-
-    Json(DateRange { min_date, max_date })
 }
 
 #[derive(FromForm)]

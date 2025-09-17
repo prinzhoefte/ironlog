@@ -659,8 +659,12 @@ body.dark-mode #utilityContainer {
 
 #timeInputs {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
+    justify-content: flex-start;
+    align-items: right;
+}
+
+#timeInputs div {
+    margin-right: 15px;
 }
 
 #timeInputs label {

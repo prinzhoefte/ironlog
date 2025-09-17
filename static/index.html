@@ -43,10 +43,14 @@
 
         <div id="utilityContainer">
             <div id="timeInputs">
-                <label for="startTime">Start Time:</label>
-                <input type="datetime-local" id="startTime" name="startTime">
-                <label for="endTime">End Time:</label>
-                <input type="datetime-local" id="endTime" name="endTime">
+                <div>
+                    <label for="startTime">Start Time:</label>
+                    <input type="datetime-local" id="startTime" name="startTime">
+                </div>
+                <div>
+                    <label for="endTime">End Time:</label>
+                    <input type="datetime-local" id="endTime" name="endTime">
+                </div>
             </div>
         </div>
 
@@ -455,75 +459,8 @@
         }
     });
 
-    // Fetch and set the date range for the inputs
-    async function fetchDateRange() {
-        try {
-            const response = await fetch('/api/date_range');
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            const data = await response.json();
-
-            if (!data.min_date || !data.max_date) {
-                throw new Error('Server returned invalid date range');
-            }
-
-            let minDate = new Date(data.min_date);
-            let maxDate = new Date(data.max_date);
-
-            if (isNaN(minDate.getTime()) || isNaN(maxDate.getTime())) {
-                throw new Error('Invalid date parsed from server data');
-            }
-
-            // Adjust minDate if the range is too narrow
-            if (maxDate.getTime() - minDate.getTime() < 3600000) {
-                minDate = new Date(maxDate.getTime() - 24 * 3600000);
-                console.warn('Date range too narrow, adjusting minDate to 24 hours before maxDate');
-            }
-
-            // Convert to datetime-local format (YYYY-MM-DDTHH:MM)
-            const minDateStr = minDate.toISOString().slice(0, 16);
-            const maxDateStr = maxDate.toISOString().slice(0, 16);
-
-            // Set min and max attributes
-            $("#startTime").attr('min', minDateStr);
-            $("#startTime").attr('max', maxDateStr);
-            $("#endTime").attr('min', minDateStr);
-            $("#endTime").attr('max', maxDateStr);
-
-            // Set initial values if not already set
-            if (!$("#startTime").val()) {
-                $("#startTime").val(minDateStr);
-            }
-            if (!$("#endTime").val()) {
-                $("#endTime").val(maxDateStr);
-            }
-
-        } catch (error) {
-            console.error('Error in fetchDateRange:', error);
-            const fallbackMinDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
-            const fallbackMaxDate = new Date();
-            const minDateStr = fallbackMinDate.toISOString().slice(0, 16);
-            const maxDateStr = fallbackMaxDate.toISOString().slice(0, 16);
-
-            $("#startTime").attr('min', minDateStr);
-            $("#startTime").attr('max', maxDateStr);
-            $("#endTime").attr('min', minDateStr);
-            $("#endTime").attr('max', maxDateStr);
-
-            if (!$("#startTime").val()) {
-                $("#startTime").val(minDateStr);
-            }
-            if (!$("#endTime").val()) {
-                $("#endTime").val(maxDateStr);
-            }
-        }
-    }
-
     // Initialize date inputs
     $(async function () {
-        await fetchDateRange();
-
         // Fetch logs when date inputs change
         $("#startTime, #endTime").on("change", function () {
             fetchLogs();
